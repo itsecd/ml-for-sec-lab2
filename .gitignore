@@ -12,3 +12,6 @@ data/
 .idea/
 
 catboost_info
+
+BOWS2/
+BOWS2_TMP
