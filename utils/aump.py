@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import numpy as np
+import numpy.linalg as lin
+from math import sqrt
 
 from typing import TYPE_CHECKING
 
@@ -22,8 +24,8 @@ def aump(input_image: np.ndarray, m: int, d: int) -> float:
     image = input_image.astype(np.float64)
     image_pred, _, weights = predict_aump(image, m, d)  # полиномиальное предсказание, веса
     residual = image - image_pred  # вычет
-    X_bar = image + 1 - 2 * np.mod(image, 2)  # переворот
-    beta = np.sum(weights * (image - X_bar) * residual)  # статистика обнаружения
+    X_bar = (image + 1) - 2 * np.mod(image, 2)  # переворот
+    beta = np.sum(np.multiply(np.multiply(weights, (image - X_bar)), residual))  # статистика обнаружения
     return beta
 
 
@@ -46,9 +48,73 @@ def predict_aump(
     """
     input_image_rows, input_image_cols = image_input.shape
 
+    sig_th = 1
+    q = d + 1
+    k_n = (input_image_rows * input_image_cols) // m  # количество блоков в m пикселях
+    y = np.zeros((m, k_n))  # y хранит все блоки пикселей в колонках
+    S = np.zeros_like(image_input)  # межпиксельное различие
+    image_pred = np.zeros_like(image_input)  # предсказанное изображение
+    flatten_image = image_input.flatten("F")
+
+    H = np.zeros((m, q))
+    x1: np.ndarray = np.arange(1, m + 1) / m
+
+    for i in range(0, q):
+        H[:, i] = np.power(x1.T, i)
+
+    for i in range(1, m + 1):  # формируем блоки пикселей
+        # aux = image_input[:, i::m]
+        if i != m:
+            aux = flatten_image[(i - 1) * k_n:i * k_n]
+        else:
+            aux = flatten_image[(i - 1) * k_n:]
+        y[i-1] = aux
+
+    p = lin.lstsq(H, y)[0]
+    y_pred = H @ p
+
+    for i in range(0, m):
+        image_pred[:, i::m] = np.reshape(y_pred[i, :], image_input[:, i::m].shape)
+
+    sig2 = np.sum(np.power(y - y_pred, 2), axis=0) / (m - q)
+    sig2 = np.maximum((sig_th ** 2) * np.ones_like(sig2.shape), sig2)
+
+    Sy = np.ones((m, 1)) * sig2
+
+    for i in range(0, m):
+        S[:, i::m] = np.reshape(Sy[i, :], image_input[:, i::m].shape)
+
+    s_n2 = k_n / np.sum(1/sig2)
+
+    S[S == 0] = 1 # защита от деления на ноль
+
+    w = sqrt(s_n2 / (k_n * (m-q))) / S
+
+    return image_pred, S, w
+
+
+def predict_aump_old(
+    image_input: np.ndarray,
+    m: int,
+    d: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Предсказатель пикселей путем подгонки локального полинома степени d = q - 1.
+    m должно разделить количество пикселей в строке.
+
+    :param image_input - изображение для предсказания.
+    :param m - размер окна в пикселях.
+    :param d = q - 1 - степень полинома для прогонки.
+
+    :return image_pred - предсказанное изображение.
+    :return sigma - локальные различия.
+    :return weights - веса.
+    """
+    input_image_rows, input_image_cols = image_input.shape
+
     signum_threshold = 1  # порог численной сходимости
     q = d + 1  # количество параметров на каждый блок
-    k_n = input_image_rows * input_image_cols // m  # количество блоков в m пикселях
+    k_n = (input_image_rows * input_image_cols) // m  # количество блоков в m пикселях
     y = np.zeros((m, k_n))  # y хранит все блоки пикселей в колонках
     sigma = np.zeros_like(image_input)  # межпиксельное различие
     image_pred = np.zeros_like(image_input)  # предсказанное изображение
